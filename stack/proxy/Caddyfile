@@ -1,0 +1,7 @@
+{
+	email {$ACME_EMAIL}
+}
+
+# One file per shop: sites/<shop>.caddy (domain → the shop's web container). Reload after a change:
+#   sellarus proxy reload
+import /etc/caddy/sites/*.caddy

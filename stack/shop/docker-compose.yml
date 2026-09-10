@@ -1,9 +1,8 @@
-# Sellarus — production stack for a VPS (written to /opt/sellarus by install.sh, editable by hand).
-# web   : the Sellarus image (Apache + PHP), application files in the "www" volume
-# db    : MariaDB, data in the "db" volume
-# caddy : HTTPS front (automatic Let's Encrypt certificate for DOMAIN)
-name: sellarus
-
+# Sellarus — one shop (written to /opt/sellarus/shops/<shop> by install.sh, editable by hand).
+# web : the Sellarus image (Apache + PHP), application files in the "www" volume
+# db  : MariaDB, data in the "db" volume
+# The project name (COMPOSE_PROJECT_NAME in .env) is sellarus-<shop>; the shared Caddy of the server reaches
+# the shop under the name sellarus-<shop> on the "sellarus-proxy" network.
 services:
   web:
     image: ghcr.io/nitrus21/sellarus:${SELLARUS_TAG:-latest}
@@ -20,7 +19,11 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    networks: [internal]
+    networks:
+      internal:
+      proxy:
+        aliases:
+          - sellarus-${SHOP}
 
   db:
     image: mariadb:11
@@ -40,28 +43,12 @@ services:
       retries: 12
     networks: [internal]
 
-  caddy:
-    image: caddy:2
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
-    environment:
-      DOMAIN: ${DOMAIN}
-      ACME_EMAIL: ${ACME_EMAIL}
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on: [web]
-    networks: [internal]
-
 volumes:
   www:
   db:
-  caddy_data:
-  caddy_config:
 
 networks:
   internal:
+  proxy:
+    external: true
+    name: sellarus-proxy

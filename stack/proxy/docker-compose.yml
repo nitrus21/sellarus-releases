@@ -1,0 +1,30 @@
+# Sellarus — shared HTTPS front of the server (written to /opt/sellarus/proxy by install.sh).
+# One Caddy for every shop of this server: it owns ports 80 and 443, obtains and renews the Let's Encrypt
+# certificate of each domain, and forwards each domain to its shop through the "sellarus-proxy" network.
+# Sites: one file per shop in sites/<shop>.caddy (written by install.sh and `sellarus domain`).
+name: sellarus-proxy
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+      - "${HTTPS_PORT:-443}:443/udp"
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:-admin@localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./sites:/etc/caddy/sites:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [proxy]
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  proxy:
+    name: sellarus-proxy
