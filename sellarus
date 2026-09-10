@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Sellarus — day-to-day command for a Docker installation (installed by install.sh in /usr/local/bin).
+#   sellarus status            containers and version
+#   sellarus update            pull the latest image and replace the software files (settings, uploads, themes kept)
+#   sellarus update <version>  same, for one precise version (e.g. 0.2.11)
+#   sellarus backup            database dump + uploads/themes/extensions into /opt/sellarus/backups/
+#   sellarus logs [service]    follow the logs (web, db, caddy)
+#   sellarus restart | stop | start
+#   sellarus shell             a shell inside the web container
+set -euo pipefail
+DIR=/opt/sellarus
+C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_TEAL=$'\033[38;5;30m'; C_GREEN=$'\033[32m'; C_RED=$'\033[31m'; C_DIM=$'\033[2m'
+cd "$DIR" 2>/dev/null || { echo "${C_RED}Sellarus is not installed in $DIR${C_RESET}"; exit 1; }
+dc() { docker compose "$@"; }
+say() { printf '%s\n' "${C_TEAL}${C_BOLD}▶${C_RESET} $*"; }
+ok() { printf '%s\n' "${C_GREEN}✔${C_RESET} $*"; }
+
+case "${1:-status}" in
+    status)
+        dc ps
+        v=$(dc exec -T web sh -c "grep -o \"VB_VERSION', '[^']*'\" /var/www/html/app/bootstrap.php | grep -o '[0-9][0-9.]*'" 2>/dev/null || true)
+        echo "${C_DIM}software version in the volume: ${v:-unknown}${C_RESET}"
+        ;;
+    update)
+        tag="${2:-latest}"
+        say "Backup first"
+        "$0" backup
+        say "Pulling ghcr.io/nitrus21/sellarus:$tag"
+        sed -i "s/^SELLARUS_TAG=.*/SELLARUS_TAG=$tag/" .env
+        dc pull web
+        say "Replacing the software files (your settings, images, themes and extensions are kept)"
+        SELLARUS_SYNC=1 dc run --rm -e SELLARUS_SYNC=1 web true
+        dc up -d
+        ok "Updated. Open the back-office once: pending database changes are applied on the first page."
+        ;;
+    backup)
+        mkdir -p backups
+        stamp=$(date +%Y%m%d-%H%M%S)
+        set -a; . ./.env; set +a
+        dc exec -T db sh -c "mariadb-dump -u\"$DB_USER\" -p\"$DB_PASSWORD\" --single-transaction \"$DB_NAME\"" > "backups/db-$stamp.sql"
+        dc exec -T web sh -c "cd /var/www/html && tar czf - uploads themes extensions config.php" > "backups/files-$stamp.tar.gz"
+        ok "Backup written: backups/db-$stamp.sql and backups/files-$stamp.tar.gz"
+        ;;
+    logs) shift; dc logs -f --tail=100 "$@" ;;
+    restart) dc restart; ok "Restarted" ;;
+    stop) dc stop; ok "Stopped" ;;
+    start) dc up -d; ok "Started" ;;
+    shell) dc exec web bash ;;
+    *) sed -n '2,10p' "$0"; exit 1 ;;
+esac

@@ -1,0 +1,12 @@
+{
+	email {$ACME_EMAIL}
+}
+
+# DOMAIN is the shop's domain name (automatic HTTPS). With no domain, install.sh sets DOMAIN to ":80"
+# and the site answers over plain HTTP on the server's IP address.
+{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy web:80 {
+		header_up X-Forwarded-Proto {scheme}
+	}
+}

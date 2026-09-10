@@ -1,0 +1,67 @@
+# Sellarus — production stack for a VPS (written to /opt/sellarus by install.sh, editable by hand).
+# web   : the Sellarus image (Apache + PHP), application files in the "www" volume
+# db    : MariaDB, data in the "db" volume
+# caddy : HTTPS front (automatic Let's Encrypt certificate for DOMAIN)
+name: sellarus
+
+services:
+  web:
+    image: ghcr.io/nitrus21/sellarus:${SELLARUS_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      SELLARUS_DB_HOST: db
+      SELLARUS_DB_PORT: "3306"
+      SELLARUS_DB_NAME: ${DB_NAME}
+      SELLARUS_DB_USER: ${DB_USER}
+      SELLARUS_DB_PASSWORD: ${DB_PASSWORD}
+      SELLARUS_DB_PREFIX: ${DB_PREFIX:-vb_}
+    volumes:
+      - www:/var/www/html
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [internal]
+
+  db:
+    image: mariadb:11
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MARIADB_DATABASE: ${DB_NAME}
+      MARIADB_USER: ${DB_USER}
+      MARIADB_PASSWORD: ${DB_PASSWORD}
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    volumes:
+      - db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks: [internal]
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [web]
+    networks: [internal]
+
+volumes:
+  www:
+  db:
+  caddy_data:
+  caddy_config:
+
+networks:
+  internal:
