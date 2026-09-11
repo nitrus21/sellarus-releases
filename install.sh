@@ -103,6 +103,11 @@ T_en=(
     [err_email]="'%s' does not look like an e-mail address."
     [err_ip_shop]="The shop '%s' already answers on the bare server address: a second shop needs a domain name."
     [err_need_domain]="A domain name is required to add a shop next to %s."
+    [existing_domains]="Shops already here: %s"
+    [no_domain_short]="no domain"
+    [err_need_domain_yes]="A domain name is required: run again with --domain <name>."
+    [err_domain_yes]="Invalid or already used --domain value."
+    [err_email_yes]="Invalid --email value."
     [q_shop]="Short name of this shop on the server (letters, digits, dashes)"
     [err_shop_invalid]="Invalid name '%s' (letters, digits, dashes, 31 characters at most)."
     [err_shop_yes]="Invalid --shop value."
@@ -229,6 +234,11 @@ T_fr=(
     [err_email]="« %s » ne ressemble pas à une adresse e-mail."
     [err_ip_shop]="La boutique « %s » répond déjà sur l'adresse nue du serveur : une deuxième boutique a besoin d'un nom de domaine."
     [err_need_domain]="Un nom de domaine est nécessaire pour ajouter une boutique à côté de %s."
+    [existing_domains]="Boutiques déjà présentes ici : %s"
+    [no_domain_short]="sans domaine"
+    [err_need_domain_yes]="Un nom de domaine est nécessaire : relancez avec --domain <nom>."
+    [err_domain_yes]="Valeur --domain invalide ou déjà utilisée."
+    [err_email_yes]="Valeur --email invalide."
     [q_shop]="Nom court de cette boutique sur le serveur (lettres, chiffres, tirets)"
     [err_shop_invalid]="Nom invalide « %s » (lettres, chiffres, tirets, 31 caractères au plus)."
     [err_shop_yes]="Valeur --shop invalide."
@@ -355,6 +365,11 @@ T_de=(
     [err_email]="„%s“ sieht nicht wie eine E-Mail-Adresse aus."
     [err_ip_shop]="Der Shop „%s“ antwortet bereits auf der bloßen Serveradresse: ein zweiter Shop braucht eine Domain."
     [err_need_domain]="Für einen weiteren Shop neben %s ist eine Domain erforderlich."
+    [existing_domains]="Shops bereits hier: %s"
+    [no_domain_short]="ohne Domain"
+    [err_need_domain_yes]="Eine Domain ist erforderlich: erneut mit --domain <name> starten."
+    [err_domain_yes]="Ungültiger oder bereits verwendeter Wert für --domain."
+    [err_email_yes]="Ungültiger Wert für --email."
     [q_shop]="Kurzname dieses Shops auf dem Server (Buchstaben, Ziffern, Bindestriche)"
     [err_shop_invalid]="Ungültiger Name „%s“ (Buchstaben, Ziffern, Bindestriche, höchstens 31 Zeichen)."
     [err_shop_yes]="Ungültiger Wert für --shop."
@@ -481,6 +496,11 @@ T_es=(
     [err_email]="«%s» no parece una dirección de correo."
     [err_ip_shop]="La tienda «%s» ya responde en la dirección del servidor sin dominio: una segunda tienda necesita un nombre de dominio."
     [err_need_domain]="Se necesita un nombre de dominio para añadir una tienda junto a %s."
+    [existing_domains]="Tiendas ya presentes aquí: %s"
+    [no_domain_short]="sin dominio"
+    [err_need_domain_yes]="Se necesita un nombre de dominio: vuelva a lanzar con --domain <nombre>."
+    [err_domain_yes]="Valor de --domain no válido o ya utilizado."
+    [err_email_yes]="Valor de --email no válido."
     [q_shop]="Nombre corto de esta tienda en el servidor (letras, cifras, guiones)"
     [err_shop_invalid]="Nombre no válido «%s» (letras, cifras, guiones, 31 caracteres como máximo)."
     [err_shop_yes]="Valor de --shop no válido."
@@ -607,6 +627,11 @@ T_it=(
     [err_email]="«%s» non sembra un indirizzo e-mail."
     [err_ip_shop]="Il negozio «%s» risponde già sull'indirizzo nudo del server: un secondo negozio ha bisogno di un nome di dominio."
     [err_need_domain]="Serve un nome di dominio per aggiungere un negozio accanto a %s."
+    [existing_domains]="Negozi già presenti qui: %s"
+    [no_domain_short]="senza dominio"
+    [err_need_domain_yes]="Serve un nome di dominio: rilancia con --domain <nome>."
+    [err_domain_yes]="Valore di --domain non valido o già usato."
+    [err_email_yes]="Valore di --email non valido."
     [q_shop]="Nome breve di questo negozio sul server (lettere, cifre, trattini)"
     [err_shop_invalid]="Nome non valido «%s» (lettere, cifre, trattini, al massimo 31 caratteri)."
     [err_shop_yes]="Valore di --shop non valido."
@@ -880,22 +905,35 @@ step "$(tp step4)" "$(tr_ why4)"
 PUBLIC_IP=$(curl -fsS --max-time 8 https://api.ipify.org 2>/dev/null || curl -fsS --max-time 8 https://ifconfig.me 2>/dev/null || true)
 [ -n "$PUBLIC_IP" ] && note "$(tr_ public_ip "$PUBLIC_IP")"
 IP_SHOP=$(grep -ls '^:80 {' "$PROXY"/sites/*.caddy 2>/dev/null | head -n1 | xargs -r basename | sed 's/\.caddy$//' || true)
+# Shops already here, with their domain, so that a new domain can be chosen knowingly.
 if [ -n "$EXISTING" ]; then
-    [ -n "$DOMAIN" ] || ask DOMAIN "$(tr_ q_domain_more)" ""
-else
-    [ -n "$DOMAIN" ] || ask DOMAIN "$(tr_ q_domain)" ""
+    USED=""; for s in $EXISTING; do d=$(grep -o '^DOMAIN=.*' "$SHOPS/$s/.env" | cut -d= -f2-); USED="$USED, $s ($([ -n "$d" ] && printf '%s' "$d" || tp no_domain_short))"; done
+    note "$(tr_ existing_domains "${USED#, }")"
 fi
-DOMAIN=$(printf '%s' "$DOMAIN" | tr 'A-Z' 'a-z' | sed 's#^https\?://##; s#/.*$##')
+# Every answer is asked again until it is acceptable: the script never stops on an answer (only --yes, which cannot ask, does).
+while :; do
+    if [ -n "$EXISTING" ]; then [ -n "$DOMAIN" ] || ask DOMAIN "$(tr_ q_domain_more)" ""
+    else [ -n "$DOMAIN" ] || ask DOMAIN "$(tr_ q_domain)" ""; fi
+    DOMAIN=$(printf '%s' "$DOMAIN" | tr 'A-Z' 'a-z' | sed 's#^https\?://##; s#/.*$##')
+    if [ -z "$DOMAIN" ]; then
+        if [ -n "$IP_SHOP" ]; then warn "$(tr_ err_ip_shop "$IP_SHOP")"; [ "$YES" = 1 ] && die "$(tr_ err_need_domain_yes)"; continue; fi
+        if [ -n "$EXISTING" ]; then warn "$(tr_ err_need_domain "$(printf '%s ' $EXISTING)")"; [ "$YES" = 1 ] && die "$(tr_ err_need_domain_yes)"; continue; fi
+        break
+    fi
+    if ! printf '%s' "$DOMAIN" | grep -Eq '^([a-z0-9-]+\.)+[a-z]{2,}$'; then warn "$(tr_ err_domain "$DOMAIN")"; DOMAIN=""; [ "$YES" = 1 ] && die "$(tr_ err_domain_yes)"; continue; fi
+    TAKEN=""; for s in $EXISTING; do [ "$(grep -o '^DOMAIN=.*' "$SHOPS/$s/.env" | cut -d= -f2-)" = "$DOMAIN" ] && TAKEN=$s; done
+    if [ -n "$TAKEN" ]; then warn "$(tr_ err_domain_used "$DOMAIN" "$TAKEN")"; DOMAIN=""; [ "$YES" = 1 ] && die "$(tr_ err_domain_yes)"; continue; fi
+    break
+done
 if [ -n "$DOMAIN" ]; then
-    printf '%s' "$DOMAIN" | grep -Eq '^([a-z0-9-]+\.)+[a-z]{2,}$' || die "$(tr_ err_domain "$DOMAIN")"
-    for s in $EXISTING; do [ "$(grep -o '^DOMAIN=.*' "$SHOPS/$s/.env" | cut -d= -f2-)" = "$DOMAIN" ] && die "$(tr_ err_domain_used "$DOMAIN" "$s")"; done
     if [ -f "$PROXY/.env" ]; then EMAIL=${EMAIL:-$(grep -o '^ACME_EMAIL=.*' "$PROXY/.env" | cut -d= -f2-)}; [ "$EMAIL" = admin@localhost ] && EMAIL=""; fi
-    [ -n "$EMAIL" ] || ask EMAIL "$(tr_ q_email)" ""
-    printf '%s' "$EMAIL" | grep -Eq '^[^@ ]+@[^@ ]+\.[a-z]{2,}$' || die "$(tr_ err_email "$EMAIL")"
+    while :; do
+        [ -n "$EMAIL" ] || ask EMAIL "$(tr_ q_email)" ""
+        printf '%s' "$EMAIL" | grep -Eq '^[^@ ]+@[^@ ]+\.[a-z]{2,}$' && break
+        warn "$(tr_ err_email "$EMAIL")"; EMAIL=""; [ "$YES" = 1 ] && die "$(tr_ err_email_yes)"
+    done
     DEF_SHOP=$(printf '%s' "$DOMAIN" | sed 's/^www\.//' | cut -d. -f1 | tr -c 'a-z0-9-' '-' | sed 's/-*$//')
 else
-    [ -z "$IP_SHOP" ] || die "$(tr_ err_ip_shop "$IP_SHOP")"
-    [ -z "$EXISTING" ] || die "$(tr_ err_need_domain "$(printf '%s ' $EXISTING)")"
     DEF_SHOP=boutique
 fi
 [ -n "$DEF_SHOP" ] || DEF_SHOP=boutique
