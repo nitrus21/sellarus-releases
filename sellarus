@@ -40,6 +40,7 @@ fetch() { [ -f "$2" ] || curl -fsSL "$BASE_URL/$1" -o "$2" || die "Could not dow
 resolve_shop() {
     local list; list=$(shops)
     if [ -n "${1:-}" ]; then
+        printf '%s' "$1" | grep -Eq '^[a-z0-9][a-z0-9-]{0,30}$' || die "Invalid shop name '$1'."
         [ -f "$SHOPS/$1/.env" ] || die "Unknown shop '$1'. Shops of this server: $(printf '%s ' $list)"
         SHOP=$1; return
     fi
