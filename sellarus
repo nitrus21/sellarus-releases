@@ -10,8 +10,8 @@
 #   sellarus logs [shop] [service]      follow the logs (web, db)
 #   sellarus restart|stop|start [shop|all]
 #   sellarus shell [shop]               a shell inside the web container
-#   sellarus domain <shop> [domain]     change the domain of a shop (no domain = HTTP on the server address)
-#   sellarus remove <shop> [--purge]    remove a shop (containers, site); --purge also deletes its data volumes
+#   sellarus domain <shop> [domain]     show the address of a shop, or change its domain (--none = HTTP on the server address)
+#   sellarus remove <shop> [--purge]    remove a shop (containers, site; data kept, 'sellarus start' brings it back); --purge also deletes its data volumes
 #   sellarus proxy status|logs|reload|restart
 #   sellarus migrate                    convert a single-shop installation of the first layout (/opt/sellarus/.env)
 set -euo pipefail
@@ -22,7 +22,7 @@ IMAGE=ghcr.io/nitrus21/sellarus
 BASE_URL="${SELLARUS_BASE_URL:-https://raw.githubusercontent.com/nitrus21/sellarus-releases/main}"
 if [ -t 1 ]; then R=$'\033[0m'; B=$'\033[1m'; TEAL=$'\033[38;5;30m'; GREEN=$'\033[32m'; RED=$'\033[31m'; YELLOW=$'\033[33m'; DIM=$'\033[2m'
 else R=''; B=''; TEAL=''; GREEN=''; RED=''; YELLOW=''; DIM=''; fi
-say()  { printf '%s\n' "${TEAL}${B}▶${R} $*"; }
+say()  { printf '%s\n' "${TEAL}${B}»${R} $*"; }
 ok()   { printf '%s\n' "${GREEN}✔${R} $*"; }
 warn() { printf '%s\n' "${YELLOW}▲${R} $*"; }
 die()  { printf '%s\n' "${RED}✖${R} $*" >&2; exit 1; }
@@ -71,7 +71,13 @@ proxy_reload() {
     fi
 }
 # another shop already answers on the bare address?
-ip_shop() { grep -ls '^:80 {' "$PROXY"/sites/*.caddy 2>/dev/null | head -n1 | xargs -r basename | sed 's/\.caddy$//'; }
+ip_shop() { { grep -ls '^:80 {' "$PROXY"/sites/*.caddy 2>/dev/null || true; } | head -n1 | xargs -r basename | sed 's/\.caddy$//'; }
+# state_of <shop>: running | stopped (containers exist) | removed (no container, site file gone: data kept)
+state_of() {
+    if [ -n "$(dcs "$1" ps -q web 2>/dev/null)" ]; then echo running
+    elif [ -n "$(dcs "$1" ps -a -q web 2>/dev/null)" ] || [ -f "$PROXY/sites/$1.caddy" ]; then echo stopped
+    else echo removed; fi
+}
 
 cmd=${1:-}; [ -n "$cmd" ] || usage 0
 shift || true
@@ -83,9 +89,10 @@ case "$cmd" in
         printf '%s%-18s %-34s %-10s %s%s\n' "$B" "SHOP" "ADDRESS" "STATE" "VERSION" "$R"
         for s in $(shops); do
             d=$(shop_env "$s" DOMAIN); [ -n "$d" ] && url="https://$d" || url="http://<server IP>"
-            if [ -n "$(dcs "$s" ps -q web 2>/dev/null)" ]; then state="running"; v=$(version_of "$s"); else state="stopped"; v=""; fi
+            state=$(state_of "$s"); v=""; [ "$state" = running ] && v=$(version_of "$s")
             printf '%-18s %-34s %-10s %s\n' "$s" "$url" "$state" "${v:-—}"
         done
+        [ -z "$(for s in $(shops); do [ "$(state_of "$s")" = removed ] && echo x; done)" ] || echo "${DIM}removed = taken off the server, data kept: 'sellarus start <shop>' brings it back, 'sellarus remove <shop> --purge' deletes it.${R}"
         ;;
     status)
         resolve_shop "${1:-}"
@@ -125,14 +132,25 @@ case "$cmd" in
             [ "$cmd" = stop ] || dcp up -d; [ "$cmd" = stop ] && dcp stop; ok "Done"
         else
             resolve_shop "${1:-}"
-            case "$cmd" in start) dcp up -d >/dev/null; dcs "$SHOP" up -d ;; *) dcs "$SHOP" "$cmd" ;; esac
+            case "$cmd" in
+                start) [ -f "$PROXY/sites/$SHOP.caddy" ] || { write_site "$SHOP" "$(shop_env "$SHOP" DOMAIN)"; say "Address of $SHOP registered again in the front"; }
+                       dcs "$SHOP" up -d; proxy_reload ;;
+                *) dcs "$SHOP" "$cmd" ;;
+            esac
             ok "$SHOP: $cmd"
         fi
         ;;
     shell) resolve_shop "${1:-}"; dcs "$SHOP" exec web bash ;;
     domain)
-        [ -n "${1:-}" ] || die "Usage: sellarus domain <shop> [domain]   (no domain = HTTP on the server address)"
-        resolve_shop "$1"; domain=$(printf '%s' "${2:-}" | tr 'A-Z' 'a-z' | sed 's#^https\?://##; s#/.*$##')
+        [ -n "${1:-}" ] || die "Usage: sellarus domain <shop> [domain | --none]   (--none = HTTP on the server address)"
+        resolve_shop "$1"
+        if [ -z "${2:-}" ]; then
+            d=$(shop_env "$SHOP" DOMAIN)
+            [ -n "$d" ] && ok "$SHOP answers on https://$d" || ok "$SHOP answers on http://<server IP> (no domain)"
+            echo "${DIM}Change it: sellarus domain $SHOP <domain>   ·   HTTP on the server address: sellarus domain $SHOP --none${R}"
+            exit 0
+        fi
+        domain=$(printf '%s' "$2" | tr 'A-Z' 'a-z' | sed 's#^https\?://##; s#/.*$##'); [ "$domain" = --none ] && domain=""
         if [ -n "$domain" ]; then printf '%s' "$domain" | grep -Eq '^([a-z0-9-]+\.)+[a-z]{2,}$' || die "'$domain' does not look like a domain name."
         else other=$(ip_shop); [ -z "$other" ] || [ "$other" = "$SHOP" ] || die "Shop '$other' already answers on the bare server address; only one shop can be without a domain."; fi
         sed -i "s/^DOMAIN=.*/DOMAIN=$domain/" "$SHOPS/$SHOP/.env"
